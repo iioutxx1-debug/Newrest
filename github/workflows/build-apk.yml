@@ -1,0 +1,94 @@
+name: Build Funland Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    name: Build Funland APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Verify Android SDK Environment & Accept Licenses
+        run: |
+          echo "=== Android SDK & Java Diagnostics ==="
+          java -version
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
+          which sdkmanager
+          sdkmanager --version
+          yes | sdkmanager --licenses > /dev/null
+          ls -la "${ANDROID_HOME}/platforms"
+          ls -la "${ANDROID_HOME}/build-tools"
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Verify Dependency Tree (No Peer Conflicts)
+        run: npm ls esbuild vite @tailwindcss/vite @vitejs/plugin-react
+
+      - name: Typecheck & Build Web Bundle
+        run: |
+          npm run lint
+          npm run build
+
+      - name: Sync Capacitor
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Grant Execute Permission for Gradle Wrapper
+        working-directory: ./android
+        run: chmod +x gradlew
+
+      - name: Build Debug APK with Gradle
+        working-directory: ./android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify Generated APK Exists and Check Size
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "Error: APK file was not found at $APK_PATH"
+            exit 1
+          fi
+          ls -lh "$APK_PATH"
+
+      - name: Upload Funland APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: funland-android-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
